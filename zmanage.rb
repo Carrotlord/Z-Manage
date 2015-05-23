@@ -3,6 +3,114 @@ Z-Manage: Project management tool in Ruby
 @author Jiangcheng Oliver Chu
 =end
 
+class Command
+  def initialize(name, args_taken, aliases, flags)
+    @name = name
+    @args_taken = args_taken
+    @has_varargs = true
+    @aliases = aliases
+    init_flags(flags)
+  end
+
+  # Abstract method get_desc, should be overwritten.
+  def get_desc
+    return 'This command has no description.'
+  end
+
+  # Abstract method execute, should be overwritten.
+  def execute(*args)
+    check_args(args)
+    println('Command', @name, 'not yet implemented.')
+  end
+
+  def flag?(arg)
+    return arg.start_with?('--')
+  end
+
+  def init_flags(flags)
+    @flags = {}
+    flags.each do |name|
+      @flags[name] = false
+    end
+  end
+ 
+  def write_flags(args)
+    args.each do |arg|
+      if flag?(arg)
+        status = set_flag(arg)
+        if status == :failure
+          return arg
+        else
+          args.delete(arg)
+        end
+      end
+    end
+    return :success
+  end
+
+  def has_flag?(flag_name)
+    return @flags.has_key?(flag_name)
+  end
+
+  def flag_active?(flag_name)
+    if !has_flag?(flag_name)
+      raise Exception.new("No such flag: #{flag_name}")
+    else
+      return @flags[flag_name]
+    end
+  end
+
+  def set_flag(flag_name)
+    if !has_flag?(flag_name)
+      return :failure
+    else
+      @flags[flag_name] = true
+      return :success
+    end
+  end
+
+  def reset_flags
+    @flags.each_key do |name|
+      @flags[name] = false
+    end
+  end
+
+  def check_args(args)
+    if !@has_varargs
+      println(@name, 'takes', @args_taken.length, 'arguments, not', args.length, '.')
+    end
+  end
+
+  def get_names
+    return [@name] + @aliases
+  end
+
+  def get_docs
+    docs = 'Usage: ' + @name + ' '
+    if @has_varargs
+      docs += "<variable arguments>\n"
+    else
+      docs += @args_taken.join(' ') + "\n"
+    end
+    docs += '  ' + get_desc
+    if !@aliases.empty?
+      docs += "\n  Aliases: " + @aliases.join(', ')
+    end
+    if !@flags.empty?
+      docs += "\n  Flags: " + @flags.keys.join(', ')
+    end
+    return docs
+  end
+
+  def aliases
+    @aliases
+  end
+
+  def set_name(name)
+    @name = name
+  end
+end
+
 class ArgParser
   def initialize; end
 
@@ -75,58 +183,6 @@ class ArgParser
   end
 end
 
-class Command
-  def initialize(name, args_taken, aliases)
-    @name = name
-    @args_taken = args_taken
-    @has_varargs = true
-    @aliases = aliases
-  end
-
-  # Abstract method get_desc, should be overwritten.
-  def get_desc
-    return 'This command has no description.'
-  end
-
-  # Abstract method execute, should be overwritten.
-  def execute(*args)
-    check_args(args)
-    println('Command', @name, 'not yet implemented.')
-  end
-
-  def check_args(args)
-    if !@has_varargs
-      println(@name, 'takes', @args_taken.length, 'arguments, not', args.length, '.')
-    end
-  end
-
-  def get_names
-    return [@name] + @aliases
-  end
-
-  def get_docs
-    docs = 'Usage: ' + @name + ' '
-    if @has_varargs
-      docs += "<variable arguments>\n"
-    else
-      docs += @args_taken.join(' ') + "\n"
-    end
-    docs += '  ' + get_desc
-    if @aliases.length > 0
-      docs += "\n  Aliases: " + @aliases.join(', ')
-    end
-    return docs
-  end
-
-  def aliases
-    @aliases
-  end
-
-  def set_name(name)
-    @name = name
-  end
-end
-
 class ExitCommand < Command
   def initialize(chosen_alias)
     @name = chosen_alias
@@ -192,6 +248,48 @@ class HelpCommand < Command
   end
 end
 
+class CountLinesCommand < Command
+  def initialize
+    @name = 'count'
+    @args_taken = []
+    @has_varargs = true
+    @aliases = []
+    init_flags(['--ignore-blank-lines'])
+  end
+
+  def get_desc
+    return 'Counts lines in files, given filepath(s) as arguments.'
+  end
+
+  def execute(*args)
+    status = write_flags(args)
+    if status != :success
+      println(status, 'is not accepted by this command.')
+      return
+    end
+    args.each do |path|
+      if !File.exist?(path)
+        println(path, '   <file doesn\'t exist>')
+      elsif !File.file?(path)
+        println(path, '   <directory>')
+      else
+        if flag_active?('--ignore-blank-lines')
+          count = 0
+          IO.readlines(path).each do |line|
+            if !line.strip.empty?
+              count += 1
+            end
+          end
+          println(path, '  ', count, 'lines (ignoring blanks)')
+        else
+          println(path, '  ', IO.readlines(path).length, 'lines')
+        end
+      end
+    end
+    reset_flags
+  end
+end
+
 def println(*args)
   args.each do |arg|
     print arg
@@ -217,7 +315,8 @@ def main
    'quit' => ExitCommand.new('quit'),
    'bye' => ExitCommand.new('bye'),
    'parseargs' => ParseArgsCommand.new,
-   'help' => nil
+   'help' => nil,
+   'count' => CountLinesCommand.new
  }
  all_commands['help'] = HelpCommand.new(all_commands)
  parser = ArgParser.new
