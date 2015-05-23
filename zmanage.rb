@@ -76,8 +76,11 @@ class Command
   end
 
   def check_args(args)
-    if !@has_varargs
-      println(@name, 'takes', @args_taken.length, 'arguments, not', args.length, '.')
+    if !@has_varargs && @args_taken.length != args.length
+      println(@name, 'takes', @args_taken.length, "arguments, not #{args.length}.")
+      return :failure
+    else
+      return :success
     end
   end
 
@@ -124,6 +127,10 @@ class ArgParser
     command_invoked.each_char do |c|
       case c
         when ' ', "\t"
+          if is_copying_next
+            buffer += '\\'
+            is_copying_next = false
+          end
           if is_inside_single_quote || is_inside_double_quote
             buffer += ' '
           elsif !is_inside_whitespace
@@ -172,6 +179,10 @@ class ArgParser
           end
           is_inside_whitespace = false
         else
+          if is_copying_next
+            buffer += '\\'
+            is_copying_next = false
+          end
           buffer += c
           is_inside_whitespace = false
       end
@@ -189,6 +200,7 @@ class ExitCommand < Command
     @args_taken = []
     @has_varargs = false
     @aliases = ['quit', 'bye', 'exit'].delete_if { |command| command == @name }
+    @flags = []
   end
 
   def get_desc
@@ -206,6 +218,7 @@ class ParseArgsCommand < Command
     @args_taken = []
     @has_varargs = true
     @aliases = []
+    @flags = []
   end
 
   def get_desc
@@ -225,6 +238,7 @@ class HelpCommand < Command
     @aliases = []
     @all_commands = all_commands
     @sorted_commands = @all_commands.keys.sort.join(', ')
+    @flags = []
   end
 
   def get_desc
@@ -241,9 +255,10 @@ class HelpCommand < Command
       end
     else
       println('All commands:', @sorted_commands)
-      println('  For specific details, type: help <command name>')
-      println('  (Commands take arguments separated by whitespace.')
-      println('   Arguments can be quoted if they contain spaces.)')
+      println('  - For specific details, type: help <command name>')
+      println('  - Commands take arguments separated by whitespace.')
+      println('  - Arguments can be quoted if they contain spaces.')
+      println('  - Use a single quote to run system commands, like \'ls -a')
     end
   end
 end
@@ -267,6 +282,7 @@ class CountLinesCommand < Command
       println(status, 'is not accepted by this command.')
       return
     end
+    total = 0
     args.each do |path|
       if !File.exist?(path)
         println(path, '   <file doesn\'t exist>')
@@ -280,13 +296,70 @@ class CountLinesCommand < Command
               count += 1
             end
           end
-          println(path, '  ', count, 'lines (ignoring blanks)')
+          println("#{path}\t#{count} lines (ignoring blanks)")
         else
-          println(path, '  ', IO.readlines(path).length, 'lines')
+          count = IO.readlines(path).length
+          println("#{path}\t#{count} lines")
         end
+        total += count
+      end
+    end
+    if args.length > 1
+      if flag_active?('--ignore-blank-lines')
+        println("#{total} total lines (ignoring blanks)")
+      else
+        println("#{total} total lines")
       end
     end
     reset_flags
+  end
+end
+
+class MakeCommand < Command
+  def initialize(name, compile_step, compile_vars, desc)
+    @name = name
+    @compile_step = compile_step
+    @args_taken = compile_vars
+    @has_varargs = false
+    @aliases = []
+    @flags = []
+    @desc = desc
+  end
+
+  def get_desc
+    return @desc
+  end
+
+  def execute(*args)
+    status = check_args(args)
+    compile_command = String.new(@compile_step)
+    if status != :failure
+      for i in 0..(args.length - 1)
+        compile_command.gsub!(/\$#{@args_taken[i]}/, args[i])
+      end
+      run_sys_command(compile_command)
+    end
+  end
+end
+
+class ViewOSCommand < Command
+  def initialize
+    @name = 'os'
+    @args_taken = []
+    @has_varargs = false
+    @aliases = []
+    @flags = []
+  end
+
+  def get_desc
+    return 'Returns name of current OS.'
+  end
+
+  def execute(*args)
+    status = check_args(args)
+    if status != :failure
+      println(get_os.id2name)
+    end
   end
 end
 
@@ -307,6 +380,37 @@ def print_header(message)
   println('======= ', message, ' =======')
 end
 
+def get_os
+  if RbConfig::CONFIG['host_os'] =~ /mswin|mingw|cygwin/
+    return :Windows
+  elsif RbConfig::CONFIG['host_os'] =~ /darwin/
+    return :Mac
+  elsif RbConfig::CONFIG['host_os'] =~ /linux|bsd/
+    return :Linux
+  elsif RbConfig::CONFIG['host_os'] =~ /bsd/
+    return :BSD
+  end
+end
+
+def windows_rebind(unix_command)
+  if get_os == :Windows
+    case unix_command
+      when 'pwd'
+        return 'cd'
+    end
+  end
+  return unix_command
+end
+
+def run_sys_command(sys_command)
+  begin
+    println(`#{sys_command}`)
+  rescue StandardError => e
+    println("Running the system command `#{sys_command}' failed:")
+    println(e.inspect)
+  end
+end
+
 def main
  print_header('Z-Manage')
  println('Type help for assistance & available commands.')
@@ -316,7 +420,15 @@ def main
    'bye' => ExitCommand.new('bye'),
    'parseargs' => ParseArgsCommand.new,
    'help' => nil,
-   'count' => CountLinesCommand.new
+   'count' => CountLinesCommand.new,
+   'os' => ViewOSCommand.new,
+   'jmake' => MakeCommand.new(
+                'jmake',
+                'javac -cp "$classpath" "$classpath/$relfile"',
+                ['classpath', 'relfile'],
+                "Compiles Java source using `classpath' and main file `relfile'.\n" \
+                "  Example: jmake '/home/joe/projects/java' mypackage/Main.java"
+              )
  }
  all_commands['help'] = HelpCommand.new(all_commands)
  parser = ArgParser.new
@@ -328,6 +440,11 @@ def main
      exit
    end
    query = query.chomp
+   if query.start_with?('\'')
+     sys_command = windows_rebind(query[1..-1])
+     run_sys_command(sys_command)
+     next
+   end
    pieces = parser.parse(query)
    if !query.strip.empty? && !pieces.empty?
      command = pieces[0]
