@@ -263,17 +263,88 @@ class HelpCommand < Command
   end
 end
 
+def string_tail(str)
+  if str.empty?
+    return ''
+  else
+    return str[1..-1]
+  end
+end
+
 class CountLinesCommand < Command
   def initialize
     @name = 'count'
     @args_taken = []
     @has_varargs = true
     @aliases = []
+    @ignore_extensions = ['.class', '.form']
     init_flags(['--ignore-blank-lines'])
   end
 
   def get_desc
-    return 'Counts lines in files, given filepath(s) as arguments.'
+    return 'Counts lines in files, given filepath(s) as arguments.'\
+           "\n  If given 1 directory, counts files in that directory & its subdirectories."
+  end
+
+  def ignore?(path)
+    @ignore_extensions.each do |ext|
+      if path.end_with?(ext)
+        return true
+      end
+    end
+    return false
+  end
+
+  def count_all(root, partial_path='')
+    total = 0
+    full_path = File.join(root, partial_path)
+    entries = Dir.entries(full_path)
+    entries.each do |path|
+      new_full_path = File.join(full_path, path)
+      new_partial_path = File.join(partial_path, path)
+      if File.file?(new_full_path)
+        unless ignore?(path)
+          count = count_lines("#{new_full_path}", flag_active?('--ignore-blank-lines'))
+          print_count(string_tail(new_partial_path), count)
+          total += count
+        end
+      else
+        if !path.start_with?('.')
+          total += count_all(root, new_partial_path)
+        end
+      end
+    end
+    return total
+  end
+
+  def count_lines(file, should_ignore_blanks)
+    if should_ignore_blanks
+      count = 0
+      IO.readlines(file).each do |line|
+        if !line.strip.empty?
+          count += 1
+        end
+      end
+      return count
+    else
+      return IO.readlines(file).length
+    end
+  end
+
+  def print_total(total)
+    if flag_active?('--ignore-blank-lines')
+      println("#{total} total lines (ignoring blanks)")
+    else
+      println("#{total} total lines")
+    end
+  end
+
+  def print_count(path, count)
+    if flag_active?('--ignore-blank-lines')
+      println("#{path}\t#{count} lines (ignoring blanks)")
+    else
+      println("#{path}\t#{count} lines")
+    end
   end
 
   def execute(*args)
@@ -283,32 +354,26 @@ class CountLinesCommand < Command
       return
     end
     total = 0
-    args.each do |path|
-      if !File.exist?(path)
-        println(path, '   <file doesn\'t exist>')
-      elsif !File.file?(path)
-        println(path, '   <directory>')
-      else
-        if flag_active?('--ignore-blank-lines')
-          count = 0
-          IO.readlines(path).each do |line|
-            if !line.strip.empty?
-              count += 1
-            end
-          end
-          println("#{path}\t#{count} lines (ignoring blanks)")
+    if args.length == 1 && !File.file?(args[0])
+      print_total(count_all(args[0]))
+    else
+      args.each do |path|
+        if !File.exist?(path)
+          println(path, '   <file doesn\'t exist>')
+        elsif !File.file?(path)
+          println(path, '   <directory>')
         else
-          count = IO.readlines(path).length
-          println("#{path}\t#{count} lines")
+          if flag_active?('--ignore-blank-lines')
+            count = count_lines(path, true)
+          else
+            count = count_lines(path, false)
+          end
+          print_count(path, count)
+          total += count
         end
-        total += count
       end
-    end
-    if args.length > 1
-      if flag_active?('--ignore-blank-lines')
-        println("#{total} total lines (ignoring blanks)")
-      else
-        println("#{total} total lines")
+      if args.length > 1
+        print_total(total)
       end
     end
     reset_flags
@@ -385,7 +450,7 @@ def get_os
     return :Windows
   elsif RbConfig::CONFIG['host_os'] =~ /darwin/
     return :Mac
-  elsif RbConfig::CONFIG['host_os'] =~ /linux|bsd/
+  elsif RbConfig::CONFIG['host_os'] =~ /linux/
     return :Linux
   elsif RbConfig::CONFIG['host_os'] =~ /bsd/
     return :BSD
