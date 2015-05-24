@@ -428,6 +428,40 @@ class ViewOSCommand < Command
   end
 end
 
+class ElevateCommand < Command
+  def initialize
+    @name = 'elevate'
+    @args_taken = ['filename']
+    @has_varargs = false
+    @aliases = []
+    @flags = []
+  end
+
+  def get_desc
+    return 'Restores read/write permissions to the file.'
+  end
+
+  def execute(*args)
+    status = check_args(args)
+    if status != :failure
+      file_name = args[0]
+      begin
+        file = File.open(file_name, 'wb+')
+        file.close
+      rescue StandardError => e
+        case get_os
+          when :Windows
+            run_sys_command("attrib -r #{file_name}")
+          when :Linux, :Mac, :BSD
+            run_sys_command("chmod a+rw #{file_name}")
+          else
+            println('Could not set permissions.')
+        end
+      end
+    end
+  end
+end
+
 def println(*args)
   args.each do |arg|
     print arg
@@ -458,21 +492,51 @@ def get_os
 end
 
 def windows_rebind(unix_command)
-  if get_os == :Windows
+  if unix_command != :run_nothing && get_os == :Windows
     case unix_command
       when 'pwd'
         return 'cd'
+      else
+        pieces = ArgParser.new.parse(unix_command)
+        unless pieces.empty?
+          command = pieces[0]
+          args = pieces.drop(1)
+          if command == 'whereis'
+            return 'where ' + args.join(' ')
+          elsif command == 'cat' && pieces.length == 2
+            file = File.open(pieces[1], 'r')
+            println(file.read)
+            file.close
+          else
+            return unix_command
+          end
+        end
     end
   end
-  return unix_command
+  return :run_nothing
+end
+
+def unix_rebind(command)
+  pieces = ArgParser.new.parse(command)
+  if pieces[0] == 'cd' && pieces.length == 2
+    Dir.chdir(pieces[1])
+    return :run_nothing
+  end
+  return command
+end
+
+def rebind(command)
+  return windows_rebind(unix_rebind(command))
 end
 
 def run_sys_command(sys_command)
-  begin
-    println(`#{sys_command}`)
-  rescue StandardError => e
-    println("Running the system command `#{sys_command}' failed:")
-    println(e.inspect)
+  if sys_command != :run_nothing
+    begin
+      println(`#{sys_command}`)
+    rescue StandardError => e
+      println("Running the system command `#{sys_command}' failed:")
+      println(e.inspect)
+    end
   end
 end
 
@@ -493,7 +557,8 @@ def main
                 ['classpath', 'relfile'],
                 "Compiles Java source using `classpath' and main file `relfile'.\n" \
                 "  Example: jmake '/home/joe/projects/java' mypackage/Main.java"
-              )
+              ),
+   'elevate' => ElevateCommand.new
  }
  all_commands['help'] = HelpCommand.new(all_commands)
  parser = ArgParser.new
@@ -506,7 +571,7 @@ def main
    end
    query = query.chomp
    if query.start_with?('\'')
-     sys_command = windows_rebind(query[1..-1])
+     sys_command = rebind(query[1..-1])
      run_sys_command(sys_command)
      next
    end
