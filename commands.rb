@@ -376,4 +376,95 @@ class ElevateCommand < Command
   end
 end
 
+class SetPrefCommand < Command
+  def initialize
+    @name = 'setpref'
+    @args_taken = ['preference-name']
+    @has_varargs = false
+    @aliases = []
+    @flags = []
+  end
+
+  def get_desc
+    return "Activate a preference. The following are possible arguments:\n" \
+           "    autoshell (run system commands without ' prefix)\n" \
+           "    cyg-bind  (bind all Cygwin commands)"
+  end
+
+  def all_cyg_active
+    println("All bound Cygwin programs are active.")
+  end
+
+  def execute(*args)
+    status = check_args(args)
+    if status != :failure
+      case args[0]
+        when 'autoshell'
+          prefs = Prefs.new('preferences.ini')
+          prefs['autoshell'] = '1'
+          prefs.save
+          println('Autoshell activated.')
+        when 'cyg-bind'
+          print('Enter the path of your Cygwin installation: ')
+          path = gets
+          if path
+            path.chomp!
+            prefs = Prefs.new('preferences.ini')
+            if path.end_with?('bin') || path.end_with?('bin/')
+              full_path = path
+            else
+              full_path = File.join(path, 'bin')
+            end
+            utils = Dir.entries(full_path).reject do |entry|
+              directory?(entry) || !entry.end_with?('.exe')
+            end
+            utils.map! do |entry|
+              entry[0..-5]
+            end
+            prefs['cygwin-path'] = full_path
+            prefs['cygwin-utils'] = utils.join(',')
+            prefs.save
+            println("The following cygwin utilities have been bound:\n" \
+                    "#{utils.join(', ')}")
+            println("Access them with ' or use autoshell.\n")
+            answer = yes_no_prompt("You may also choose to ignore certain Cygwin programs.\n" \
+                                   "Are there any Cygwin utilities you want to ignore right now?")
+            if answer == :yes
+              print('Type in the names of the programs, separated by spaces: ')
+              names = gets
+              if names
+                names.chomp!
+                name_array = ArgParser.new.parse(names)
+                name_array.map! do |name|
+                  if name.end_with? '.exe'
+                    name[0..-5]
+                  else
+                    name
+                  end
+                end
+                name_array.each do |name|
+                  if !utils.delete(name)
+                    println("Skipped #{name} because it doesn't exist.")
+                  else
+                    println("Added ignore rule for #{name}.")
+                  end
+                end
+                prefs['cygwin-utils'] = utils.join(',')
+                prefs.save
+                println('The Cygwin programs you wanted are now active.')
+              else
+                all_cyg_active
+              end
+            else
+              all_cyg_active
+            end
+          else
+            println("\nAction cancelled.")
+          end
+        else
+          println("#{args[0]} is not a valid preference.")
+      end
+    end
+  end
+end
 

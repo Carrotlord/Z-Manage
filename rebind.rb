@@ -32,6 +32,16 @@ def windows_rebind(unix_command)
             println(file.read)
             file.close
           else
+            prefs = Prefs.new('preferences.ini')
+            if prefs.has_key?('cygwin-utils')
+              cygwin_utils = Set.new(prefs['cygwin-utils'].split(','))
+            else
+              cygwin_utils = Set.new
+            end
+            if cygwin_utils.include?(command)
+              cyg_path = Prefs.new('preferences.ini')['cygwin-path']
+              return "#{File.join(cyg_path, command).gsub('/', '\\')} " + args.join(' ')
+            end
             return unix_command
           end
         end
