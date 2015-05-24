@@ -176,6 +176,14 @@ def main
                  "Compiles Java source using `classpath' and main file `relfile'.\n" \
                  "  Example: jmake '/home/joe/projects/java' mypackage/Main.java"
                ),
+    'jrun' => RunCommand.new(
+                'jrun',
+                'java -cp "$classpath" "@toClassName($relfile-or-class)"',
+                ['classpath', 'relfile-or-class'],
+                 "Runs Java class file using `classpath' and relative file name (or class).\n" \
+                 "  Examples: jrun '/home/joe/projects/java' mypackage/Main.class\n" \
+                 "            jrun '/home/joe/projects/java' mypackage.Main"
+              ),
     'elevate' => ElevateCommand.new,
     'setpref' => SetPrefCommand.new
   }

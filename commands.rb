@@ -321,6 +321,71 @@ class MakeCommand < Command
   end
 end
 
+class RunCommand < Command
+  def initialize(name, run_step, run_vars, desc)
+    @name = name
+    @run_step = run_step
+    @args_taken = run_vars
+    @has_varargs = false
+    @aliases = []
+    @flags = []
+    @desc = desc
+    @run_macro_regex = /@toClassName\((.*?)\)/
+  end
+
+  def get_desc
+    return @desc
+  end
+
+  def to_class_macro(rel_file_name)
+    if rel_file_name.end_with?('.class')
+      rel_file_name[-6..-1] = ''
+    elsif rel_file_name.end_with?('.java')
+      rel_file_name[-5..-1] = ''
+    end
+    return rel_file_name.gsub('/', '.')
+  end
+
+  def get_match_data(run_command)
+    return run_command.match(@run_macro_regex)
+  end
+
+  def expand_run_macros(run_command)
+    match_data = get_match_data(run_command)
+    while match_data
+      if match_data[0] && match_data[1] && run_command =~ /@toClassName/
+        run_command.gsub!(match_data[0], to_class_macro(match_data[1]))
+      else
+        throw Exception.new("Cannot expand run macros: #{run_command}")
+      end
+      match_data = get_match_data(run_command)
+    end
+    return run_command
+  end
+
+  def execute(*args)
+    status = check_args(args)
+    run_command = String.new(@run_step)
+    if status != :failure
+      for i in 0..(args.length - 1)
+        run_command.gsub!(/\$#{@args_taken[i]}/, args[i])
+      end
+      saved_dir = Dir.pwd
+      should_move = saved_dir != args[0]
+      if should_move
+        println('Temporarily moving you to project directory...')
+        Dir.chdir(args[0])
+      end
+      run_sys_command(expand_run_macros(run_command))
+      if should_move
+        Dir.chdir(saved_dir)
+      end
+    end
+  end
+
+  private :expand_run_macros, :to_class_macro, :get_match_data
+end
+
 class ViewOSCommand < Command
   def initialize
     @name = 'os'
