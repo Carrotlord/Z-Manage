@@ -1,3 +1,5 @@
+require 'irb'
+
 # Returns the user's operating system.
 # If not recognized, returns :unknown_os
 # @author Jiangcheng Oliver Chu
@@ -50,10 +52,70 @@ def windows_rebind(unix_command)
   return :run_nothing
 end
 
-def unix_rebind(command)
-  pieces = ArgParser.new.parse(command)
-  if pieces[0] == 'cd' && pieces.length == 2
+def environment
+  return binding()
+end
+
+def unix_rebind(unix_command)
+  pieces = ArgParser.new.parse(unix_command)
+  if pieces.empty?
+    return :run_nothing
+  end
+  command = pieces[0]
+  if command == 'cd' && pieces.length == 2
     Dir.chdir(pieces[1])
+    return :run_nothing
+  elsif command == 'irb' && pieces.length == 1
+    env = environment
+    println('(exit REPL using `exit\')')
+    ctrl_flow_stmt = ''
+    loop do
+      should_print = true
+      if ctrl_flow_stmt.empty?
+        print('Ruby REPL> ')
+      else
+        print('Ruby REPL* ')
+      end
+      answer = gets
+      if !answer || answer.strip == 'exit'
+        break
+      end
+      answer.strip!
+      is_require_stmt = answer.start_with?('require') || answer.start_with?('load')
+      begin
+        if is_require_stmt
+          env.eval("#{answer}")
+        else
+          begin
+            if ctrl_flow_stmt.empty?
+              result_str = env.eval("_ = #{answer}")
+            else
+              # If the following line fails, add more
+              # to the control flow statement until it
+              # is valid.
+              env.eval("#{ctrl_flow_stmt}")
+              # Success:
+              ctrl_flow_stmt = ''
+              should_print = false
+            end
+          rescue SyntaxError => e
+            ctrl_flow_stmt += "#{answer};"
+            begin
+              env.eval("#{ctrl_flow_stmt}")
+            rescue SyntaxError => e
+              next
+            end
+            ctrl_flow_stmt = ''
+            should_print = false
+          end
+        end
+      rescue StandardError => e
+        println(e.inspect)
+      end
+      if !is_require_stmt && should_print
+        println(result_str)
+      end
+    end
     return :run_nothing
   end
   return command
